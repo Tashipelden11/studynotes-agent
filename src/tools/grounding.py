@@ -2,7 +2,6 @@
 import json
 
 from src.agent.llm import OllamaLLM
-from src.tools.concepts import extract_concepts
 
 
 def _normalize(text):
@@ -11,23 +10,15 @@ def _normalize(text):
 
 
 def check_grounding(claim, source_text, llm):
-    """Check whether the lecture directly supports a claim."""
+    """Check one claim using exact supporting evidence."""
 
     prompt = (
-        "You are a lecture information checker.\n\n"
-        "Decide whether the source supports the meaning of the claim.\n\n"
-        "Rules:\n"
-        "1. Use only information from the source.\n"
-        "2. A paraphrase is allowed if it has the same meaning.\n"
-        "3. Do not use outside knowledge.\n"
-        "4. Do not invent missing definitions.\n"
-        "5. A term being mentioned does not mean it is defined.\n"
-        "6. An example can support a claim about that example.\n"
-        "7. Evidence must be copied exactly from the source.\n\n"
-        "Return ONLY one JSON object:\n"
-        '{"supported": true, "evidence": "exact source quotation"}\n'
-        "or\n"
-        '{"supported": false, "evidence": ""}\n\n'
+        "You are a lecture information checker.\n"
+        "Decide whether the source supports the claim.\n"
+        "Use only the source. Do not use outside knowledge.\n"
+        "If supported, copy an exact phrase from the source.\n\n"
+        'Return ONLY this JSON format: '
+        '{"supported": true, "evidence": "exact quote"}\n\n'
         f"SOURCE TEXT:\n{source_text}\n\n"
         f"CLAIM:\n{claim}"
     )
@@ -37,46 +28,120 @@ def check_grounding(claim, source_text, llm):
         start = reply.find("{")
 
         if start == -1:
-            return False
+            return None
 
         result, _ = json.JSONDecoder().raw_decode(reply[start:])
 
         if not isinstance(result, dict):
-            return False
+            return None
 
         supported = result.get("supported")
         evidence = result.get("evidence", "")
 
-        if not isinstance(supported, bool):
-            return False
-
         if supported is False:
             return False
 
-        if not isinstance(evidence, str) or not evidence.strip():
-            return False
+        if (
+            supported is True
+            and isinstance(evidence, str)
+            and evidence.strip()
+            and _normalize(evidence) in _normalize(source_text)
+        ):
+            return True
 
-        if _normalize(evidence) not in _normalize(source_text):
-            return False
-
-        return True
+        return None
 
     except Exception:
-        return False
+        return None
+
+
+def check_grounding_batch(claims, source_text, llm):
+    """Check multiple claims in one AI request."""
+
+    if not claims:
+        return []
+
+    prompt = (
+        "You are a careful lecture information checker.\n"
+        "Check every claim using only the source lecture.\n"
+        "Return exactly one result for each claim.\n"
+        "Keep the same order as the claims.\n"
+        "For supported claims, provide an exact quotation.\n"
+        "For unsupported claims, use an empty evidence string.\n"
+        "Do not add explanations or extra results.\n\n"
+        "Return ONLY a JSON list in this format:\n"
+        '[{"supported": true, "evidence": "exact quote"}]\n\n'
+        f"SOURCE TEXT:\n{source_text}\n\n"
+        f"CLAIMS:\n{json.dumps(claims, ensure_ascii=False)}"
+    )
+
+    try:
+        reply = llm.generate(prompt).strip()
+        start = reply.find("[")
+
+        if start == -1:
+            return [None] * len(claims)
+
+        results, _ = json.JSONDecoder().raw_decode(reply[start:])
+
+        if not isinstance(results, list) or len(results) != len(claims):
+            return [None] * len(claims)
+
+        verdicts = []
+
+        for result in results:
+            if not isinstance(result, dict):
+                return [None] * len(claims)
+
+            supported = result.get("supported")
+            evidence = result.get("evidence", "")
+
+            if not isinstance(supported, bool):
+                return [None] * len(claims)
+
+            if supported is False:
+                verdicts.append(False)
+
+            elif (
+                isinstance(evidence, str)
+                and evidence.strip()
+                and _normalize(evidence) in _normalize(source_text)
+            ):
+                verdicts.append(True)
+
+            else:
+                verdicts.append(None)
+
+        return verdicts
+
+    except Exception:
+        return [None] * len(claims)
 
 
 def check_grounding_yesno(claim, source_text, llm):
-    """Original version: ask the LLM for a one-word verdict."""
+    """Compatibility checker using a one-word verdict."""
 
-    prompt = (
-        "Read the source text and the claim. "
-        "Answer SUPPORTED only if the source text clearly states the claim. "
-        "Otherwise answer NOT_SUPPORTED. Reply with one word only.\n\n"
-        f"SOURCE TEXT:\n{source_text}\n\nCLAIM:\n{claim}"
-    )
+    try:
+        prompt = (
+            "Read the source text and the claim. "
+            "Answer SUPPORTED only if the source clearly supports it. "
+            "Otherwise answer NOT_SUPPORTED. Reply with one word only.\n\n"
+            f"SOURCE TEXT:\n{source_text}\n\n"
+            f"CLAIM:\n{claim}"
+        )
 
-    reply = llm.generate(prompt).strip().upper()
-    return reply.startswith("SUPPORTED")
+        reply = llm.generate(prompt).strip().upper()
+
+        if reply.startswith("NOT_SUPPORTED"):
+            return False
+
+        if reply.startswith("SUPPORTED"):
+            return True
+
+        return None
+
+    except Exception:
+        return None
 
 
 if __name__ == "__main__":
@@ -85,25 +150,20 @@ if __name__ == "__main__":
     with open("data/sample_lecture.txt", encoding="utf-8") as f:
         lecture = f.read()
 
-    print("\nGROUNDING TESTS\n")
-
     test_claims = [
         "An intelligent agent perceives its environment through sensors and acts through actuators.",
         "A thermostat is an example of a simple agent.",
-        "PEAS stands for Performance measure, Environment, Actuators and Sensors.",
-        "A static environment does not change over time.",
         "Chess is fully observable and deterministic.",
     ]
 
-    for claim in test_claims:
-        result = check_grounding(claim, lecture, llm)
-        verdict = "SUPPORTED" if result else "NOT SUPPORTED"
-        print(f"[{verdict}] {claim}")
+    print("\nBATCH GROUNDING TESTS\n")
 
-    print("\nEXTRACTED CONCEPTS\n")
+    results = check_grounding_batch(test_claims, lecture, llm)
 
-    for concept in extract_concepts(lecture, llm):
-        claim = f"{concept['term']}: {concept['definition']}"
-        result = check_grounding(claim, lecture, llm)
-        verdict = "SUPPORTED" if result else "NOT SUPPORTED"
+    for claim, result in zip(test_claims, results):
+        verdict = (
+            "SUPPORTED" if result is True
+            else "NOT SUPPORTED" if result is False
+            else "UNKNOWN"
+        )
         print(f"[{verdict}] {claim}")

@@ -1,24 +1,68 @@
-from src.agent.llm import OllamaLLM
-
 
 def segment_topics(text, llm=None):
-    """Split a lecture into sections (by blank lines) and optionally title each one."""
-    chunks = [c.strip() for c in text.split("\n\n") if c.strip()]
+    """Split lecture text into smaller sections."""
+
+    paragraphs = [
+        paragraph.strip()
+        for paragraph in text.split("\n\n")
+        if paragraph.strip()
+    ]
+
     segments = []
-    for i, chunk in enumerate(chunks, start=1):
-        title = f"Section {i}"
-        if llm is not None:
-            prompt = (
-                "Give a short title (maximum 6 words) for this lecture section. "
-                "Reply with the title only.\n\n" + chunk
-            )
-            title = llm.generate(prompt).strip().strip('"')
-        segments.append({"id": i, "title": title, "text": chunk})
+    current_text = []
+    current_length = 0
+    section_number = 1
+
+    # Keep sections to a manageable size.
+    max_length = 2500
+
+    for paragraph in paragraphs:
+
+        # Split exceptionally long paragraphs.
+        if len(paragraph) > max_length:
+            if current_text:
+                segments.append({
+                    "id": section_number,
+                    "title": f"Section {section_number}",
+                    "text": "\n\n".join(current_text)
+                })
+                section_number += 1
+                current_text = []
+                current_length = 0
+
+            for start in range(0, len(paragraph), max_length):
+                chunk = paragraph[start:start + max_length]
+
+                segments.append({
+                    "id": section_number,
+                    "title": f"Section {section_number}",
+                    "text": chunk
+                })
+                section_number += 1
+
+            continue
+
+        # Start a new section when the current one gets too large.
+        if current_length + len(paragraph) > max_length and current_text:
+            segments.append({
+                "id": section_number,
+                "title": f"Section {section_number}",
+                "text": "\n\n".join(current_text)
+            })
+
+            section_number += 1
+            current_text = []
+            current_length = 0
+
+        current_text.append(paragraph)
+        current_length += len(paragraph)
+
+    # Save the remaining text.
+    if current_text:
+        segments.append({
+            "id": section_number,
+            "title": f"Section {section_number}",
+            "text": "\n\n".join(current_text)
+        })
+
     return segments
-
-
-if __name__ == "__main__":
-    with open("data/sample_lecture.txt", encoding="utf-8") as f:
-        lecture = f.read()
-    for seg in segment_topics(lecture, llm=OllamaLLM()):
-        print(f"{seg['id']}. {seg['title']}")

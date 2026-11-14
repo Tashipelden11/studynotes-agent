@@ -26,35 +26,32 @@ def write_section_notes(section_text, detail, llm):
         "STRICT RULES:\n"
         "1. Use ONLY facts and information stated in the lecture.\n"
         "2. Do not add outside knowledge or assumptions.\n"
-        "3. Do not add any explanation or conclusion unless it is "
-        "stated or directly supported by the lecture.\n"
+        "3. Do not add unsupported explanations or conclusions.\n"
         "4. Do not use general knowledge to expand a concept.\n"
         "5. Keep the original meaning of every statement.\n"
-        "6. If the lecture only mentions a term, do not invent its definition.\n"
-        "7. Include the examples actually given in the lecture.\n"
+        "6. Do not invent definitions for mentioned terms.\n"
+        "7. Include examples actually given in the lecture.\n"
         "8. Use clear headings and simple language.\n"
-        "9. Do not add introductory phrases such as 'Here are the notes'.\n"
-        "10. Do not repeat the same information unnecessarily.\n\n"
+        "9. Do not add introductory phrases.\n"
+        "10. Do not repeat information unnecessarily.\n\n"
         f"LECTURE SECTION:\n{section_text}\n\n"
         "Write the study notes now."
     )
 
     return llm.generate(prompt).strip()
 
+
 def split_claims(notes_text):
-    """Split notes into checkable sentences, skipping headings and model chatter."""
+    """Split notes into checkable sentences, skipping headings and chatter."""
     claims = []
 
     for line in notes_text.splitlines():
         line = line.strip().lstrip("*-•").strip()
-
-        # Remove numbered-list formatting, such as 1. or 2.
         line = re.sub(r"^\d+\.\s*", "", line)
 
         if not line:
             continue
 
-        # Split sentences before checking whether they are complete claims.
         for sentence in re.split(r"(?<=[.!?])\s+", line):
             sentence = sentence.strip()
 
@@ -64,18 +61,24 @@ def split_claims(notes_text):
     return claims
 
 
-def mark_unverified(notes_text, section_text, check):
-    """Tag claims that are not supported by the lecture.
+def mark_unverified(notes_text, section_text, check, batch_check=None):
+    """Check claims individually or together and tag unsupported claims."""
 
-    check(claim, source_text) returns True, False, or None.
-    None means the checker failed.
-    """
     claims = split_claims(notes_text)
+
+    if batch_check is not None:
+        results = batch_check(claims, section_text)
+    else:
+        results = [check(claim, section_text) for claim in claims]
+
+    if len(results) != len(claims):
+        results = [None] * len(claims)
+
     marked = notes_text
     unverified = 0
 
-    for claim in claims:
-        if check(claim, section_text) is False:
+    for claim, result in zip(claims, results):
+        if result is False:
             unverified += 1
             marked = marked.replace(
                 claim, claim + " [unverified]", 1

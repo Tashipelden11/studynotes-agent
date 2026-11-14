@@ -2,10 +2,15 @@
 import time
 
 from src.agent.llm import OllamaLLM
-from src.agent.notes import write_section_notes, mark_unverified
 from src.agent.planner import make_plan
 from src.memory.student_memory import RATINGS, StudentMemory
-from src.tools.registry import run_tool
+from src.tools.segmenter import segment_topics
+from src.tools.concepts import analyze_section
+
+
+def normalize(text):
+    """Lowercase text and remove extra whitespace."""
+    return " ".join(text.lower().split())
 
 
 class LectureAgent:
@@ -15,123 +20,241 @@ class LectureAgent:
         self.trace = []
 
     def _log(self, step, status, seconds, detail=""):
-        self.trace.append(
-            {"step": step, "status": status, "seconds": round(seconds, 1), "detail": detail}
-        )
+        self.trace.append({
+            "step": step,
+            "status": status,
+            "seconds": round(seconds, 1),
+            "detail": detail
+        })
 
-    def _check(self, claim, lecture_text):
-        """Run the grounding tool; return True/False, or None if the tool failed."""
-        out = run_tool(
-            "check_grounding", {"claim": claim, "source_text": lecture_text}, self.llm
-        )
-        return out["result"] if out["ok"] else None
+    def _notify_progress(
+        self, callback, completed, total, title, status
+    ):
+        """Send progress information to the application."""
+        if callback is not None:
+            try:
+                callback(completed, total, title, status)
+            except Exception as error:
+                print(f"Progress display error: {error}")
 
-    def _reflect(self, state, lecture_text):
-        """Keep verified concepts and preserve mentioned concepts without inventing definitions."""
+    def _reflect(self, state):
+        """Label concepts based on exact text matching."""
         start = time.time()
-        notes = []
+        final_notes = []
+        exact_matches = 0
         mentioned = 0
-        dropped = 0
 
-        for v in state["verified"]:
-
-            if v["supported"] is True:
-                notes.append({
-                    "term": v["term"],
-                    "definition": v["definition"],
+        for item in state["verified"]:
+            if item["supported"]:
+                final_notes.append({
+                    "term": item["term"],
+                    "definition": item["definition"],
                     "status": "verified"
                 })
-                continue
-
-            if v["term"].casefold() in lecture_text.casefold():
-                notes.append({
-                    "term": v["term"],
-                    "definition": "Mentioned in the lecture, but no verified definition is available.",
+                exact_matches += 1
+            else:
+                final_notes.append({
+                    "term": item["term"],
+                    "definition": item["definition"],
                     "status": "mentioned"
                 })
                 mentioned += 1
-                continue
 
-            dropped += 1
-            notes.append({
-                "term": v["term"],
-                "definition": v["definition"],
-                "status": "dropped"
-            })
-
-        state["final_notes"] = notes
+        state["final_notes"] = final_notes
 
         self._log(
             "reflect",
             "ok",
             time.time() - start,
-            f"mentioned={mentioned}, dropped={dropped}"
+            f"exact_matches={exact_matches}, "
+            f"not_exact_matches={mentioned}"
         )
 
-    def _write_notes(self, state):
-        """Write and verify notes using the complete original lecture."""
+    def _analyze_sections(self, state, progress_callback=None):
+        """Generate notes and concepts one section at a time."""
         start = time.time()
         detail = self.memory.profile["detail"]
+
+        seen = set()
         failures = 0
-        total_checked = 0
-        total_unverified = 0
+        retries = 0
+        failed_sections = []
 
-        for section in state["sections"]:
+        total = len(state["sections"])
+
+        for index, section in enumerate(
+            state["sections"], start=1
+        ):
+            title = section["title"]
+
+            self._notify_progress(
+                progress_callback,
+                index - 1,
+                total,
+                title,
+                "processing"
+            )
+
             try:
-                notes_text = write_section_notes(
-                    section["text"], detail, self.llm
-                )
+                result = None
+                notes = ""
+                last_error = None
 
-                # Check claims against the complete lecture, not just one section.
-                marked_notes, stats = mark_unverified(
-                    notes_text, state["lecture_text"], self._check
-                )
+                placeholder_phrases = [
+                    "study notes here",
+                    "notes here",
+                    "study notes will appear here",
+                    "insert notes here",
+                    "no notes"
+                ]
 
-                total_checked += stats["checked"]
-                total_unverified += stats["unverified"]
+                # Try at most two times.
+                for attempt in range(2):
+                    try:
+                        result = analyze_section(
+                            section["text"],
+                            detail,
+                            self.llm
+                        )
+
+                        if result is None:
+                            raise ValueError(
+                                "The model did not return valid analysis."
+                            )
+
+                        notes = result["notes"].strip()
+                        notes_lower = notes.lower()
+
+                        if (
+                            not notes
+                            or any(
+                                phrase in notes_lower
+                                for phrase in placeholder_phrases
+                            )
+                        ):
+                            raise ValueError(
+                                "The model returned empty or placeholder notes."
+                            )
+
+                        if attempt == 1:
+                            retries += 1
+
+                        last_error = None
+                        break
+
+                    except Exception as error:
+                        last_error = error
+
+                        if attempt == 0:
+                            print(
+                                f"Retrying {title}: {error}"
+                            )
+
+                if last_error is not None:
+                    raise last_error
 
                 state["notes"].append({
-                    "title": section["title"],
-                    "notes": marked_notes
+                    "title": title,
+                    "notes": notes
                 })
 
-            except Exception as e:
-                print(f"Notes error in {section['title']}: {e}")
+                source = normalize(section["text"])
+
+                for concept in result["concepts"]:
+                    term = concept["term"].strip()
+                    definition = concept["definition"].strip()
+                    key = term.casefold()
+
+                    if not key or key in seen:
+                        continue
+
+                    seen.add(key)
+                    state["concepts"].append(concept)
+
+                    supported = (
+                        bool(definition)
+                        and normalize(definition) in source
+                    )
+
+                    state["verified"].append({
+                        "term": term,
+                        "definition": definition,
+                        "supported": supported,
+                        "source": section["text"]
+                    })
+
+                self._notify_progress(
+                    progress_callback,
+                    index,
+                    total,
+                    title,
+                    "completed"
+                )
+
+            except Exception as error:
                 failures += 1
+                failed_sections.append(f"{title}: {error}")
+
+                print(f"Analysis error in {title}: {error}")
 
                 state["notes"].append({
-                    "title": section["title"],
-                    "notes": "(could not write or verify notes for this section)"
+                    "title": title,
+                    "notes": (
+                        "Notes could not be generated for this "
+                        "section. Please try processing it again."
+                    )
                 })
 
-        status = "ok" if failures == 0 else "error"
+                self._notify_progress(
+                    progress_callback,
+                    index,
+                    total,
+                    title,
+                    "failed"
+                )
+
+        status = "ok" if failures == 0 else "partial"
+
+        details = (
+            f"detail={detail}, "
+            f"concepts={len(state['concepts'])}, "
+            f"failures={failures}, "
+            f"retries={retries}, "
+            f"sections={total}"
+        )
+
+        if failed_sections:
+            details += "; " + "; ".join(failed_sections)
 
         self._log(
-            "write_notes",
+            "analyze_sections",
             status,
             time.time() - start,
-            f"detail={detail}, failures={failures}, "
-            f"checked={total_checked}, unverified={total_unverified}"
+            details
         )
 
     def give_feedback(self, rating, comment=""):
-        """Pass the student's feedback to memory, which adapts the detail level."""
+        """Save student feedback."""
         self.memory.record_feedback(rating, comment)
 
-    def run(self, goal, lecture_text):
+    def run(
+        self, goal, lecture_text, progress_callback=None
+    ):
+        """Run the lecture assistant."""
         self.trace = []
+
         state = {
             "lecture_text": lecture_text,
             "sections": [],
             "concepts": [],
             "verified": [],
             "final_notes": [],
-            "notes": [],
+            "notes": []
         }
 
-        # 1. Plan
         start = time.time()
         plan = make_plan(goal, self.llm)
+
         self._log(
             "plan",
             "ok",
@@ -139,48 +262,34 @@ class LectureAgent:
             f"{plan['steps']} ({plan['source']})"
         )
 
-        # 2. Act: run each planned step
-        for step in plan["steps"]:
+        if "segment_topics" in plan["steps"]:
             start = time.time()
 
-            if step == "segment_topics":
-                out = run_tool("segment_topics", {"text": lecture_text}, self.llm)
-                if out["ok"]:
-                    state["sections"] = out["result"]
+            try:
+                state["sections"] = segment_topics(lecture_text)
 
-            elif step == "extract_concepts":
-                out = run_tool("extract_concepts", {"text": lecture_text}, self.llm)
-                if out["ok"]:
-                    state["concepts"] = out["result"]
+                self._log(
+                    "segment_topics",
+                    "ok",
+                    time.time() - start,
+                    f"sections={len(state['sections'])}"
+                )
 
-            elif step == "check_grounding":
-                if not state["concepts"]:
-                    self._log(step, "skipped", 0, "no concepts to verify yet")
-                    continue
+            except Exception as error:
+                self._log(
+                    "segment_topics",
+                    "error",
+                    time.time() - start,
+                    str(error)
+                )
+                return state, self.trace
 
-                for concept in state["concepts"]:
-                    claim = f"{concept['term']}: {concept['definition']}"
-                    state["verified"].append({
-                        "term": concept["term"],
-                        "definition": concept["definition"],
-                        "supported": self._check(claim, lecture_text),
-                    })
-
-                out = {"ok": True}
-
-            else:
-                out = {"ok": False, "error": f"No handler for step {step}"}
-
-            status = "ok" if out["ok"] else "error"
-            self._log(step, status, time.time() - start, out.get("error", ""))
-
-        # 3. Reflect
-        if state["verified"]:
-            self._reflect(state, lecture_text)
-
-        # 4. Write and verify notes
         if state["sections"]:
-            self._write_notes(state)
+            self._analyze_sections(
+                state,
+                progress_callback
+            )
+            self._reflect(state)
 
         return state, self.trace
 
@@ -190,34 +299,48 @@ if __name__ == "__main__":
         lecture = f.read()
 
     agent = LectureAgent()
-    print(f"Current detail level: {agent.memory.profile['detail']}")
+
+    print(
+        "Current detail level:",
+        agent.memory.profile["detail"]
+    )
+
     state, trace = agent.run(
         "Turn this lecture into structured study notes",
         lecture
     )
 
     print("\nSTUDY NOTES")
-    for n in state["notes"]:
-        print(f"\n## {n['title']}")
-        print(n["notes"])
+
+    for note in state["notes"]:
+        print(f"\n## {note['title']}")
+        print(note["notes"])
 
     print("\nKEY CONCEPTS")
-    for n in state["final_notes"]:
-        if n["status"] == "dropped":
-            print(f"[dropped] {n['term']} (not supported by the lecture)")
-        else:
-            print(f"[{n['status']}] {n['term']}: {n['definition']}")
+
+    for item in state["final_notes"]:
+        print(
+            f"[{item['status']}] "
+            f"{item['term']}: {item['definition']}"
+        )
 
     print("\nTRACE")
-    for t in trace:
-        print(t)
+
+    for item in trace:
+        print(item)
 
     answer = input(
-        "\nWere the notes too_short, good, or too_long? (press Enter to skip): "
+        "\nWere the notes too_short, good, or too_long? "
+        "(press Enter to skip): "
     ).strip()
 
     if answer in RATINGS:
         agent.give_feedback(answer)
-        print("Detail level is now:", agent.memory.profile["detail"])
+
+        print(
+            "Detail level is now:",
+            agent.memory.profile["detail"]
+        )
+
     elif answer:
         print("Not recognised, feedback skipped.")
