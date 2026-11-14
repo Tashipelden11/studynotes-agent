@@ -1,0 +1,19 @@
+[
+  {"claim": "An agent perceives its environment through sensors and acts on it through actuators.", "supported": true},
+  {"claim": "A thermostat is a very simple agent.", "supported": true},
+  {"claim": "An agent chooses actions to achieve a goal.", "supported": true},
+  {"claim": "PEAS stands for Performance measure, Environment, Actuators and Sensors.", "supported": true},
+  {"claim": "For a taxi driver agent, the actuators are steering and brakes.", "supported": true},
+  {"claim": "Chess is fully observable and deterministic.", "supported": true},
+  {"claim": "Taxi driving is partially observable and stochastic.", "supported": true},
+  {"claim": "The type of environment strongly affects which agent architecture works best.", "supported": true},
+
+  {"claim": "A partially observable environment is one where the agent can only perceive some of the states.", "supported": false},
+  {"claim": "A deterministic environment is one where the outcome of an action is always the same.", "supported": false},
+  {"claim": "A static environment does not change over time.", "supported": false},
+  {"claim": "Reinforcement learning agents learn from rewards.", "supported": false},
+  {"claim": "A self-driving car uses LIDAR sensors.", "supported": false},
+  {"claim": "Chess is a stochastic environment.", "supported": false},
+  {"claim": "For a taxi driver agent, the sensors are steering and brakes.", "supported": false},
+  {"claim": "Simple reflex agents react to stimuli without considering context.", "supported": false}
+]
