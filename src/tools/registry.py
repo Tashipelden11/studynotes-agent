@@ -1,7 +1,6 @@
 from src.tools.segmenter import segment_topics
 from src.tools.concepts import extract_concepts
-from src.tools.grounding import check_grounding
-
+from src.tools.grounding import check_grounding_yesno
 TOOLS = {
     "segment_topics": {
         "description": "Split a lecture into titled sections. Use first on long lecture text.",
@@ -16,7 +15,7 @@ TOOLS = {
     "check_grounding": {
         "description": "Check whether a claim is supported by the source lecture text.",
         "parameters": {"claim": "the claim to verify", "source_text": "the lecture text"},
-        "function": check_grounding,
+        "function": check_grounding_yesno,
     },
 }
 
