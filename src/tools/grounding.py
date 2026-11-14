@@ -30,6 +30,17 @@ def check_grounding(claim, source_text, llm):
         return False
     return _normalize(reply) in _normalize(source_text)
 
+def check_grounding_yesno(claim, source_text, llm):
+    """Original version: ask the LLM for a one-word verdict (no quote check)."""
+    prompt = (
+        "Read the source text and the claim. "
+        "Answer SUPPORTED only if the source text clearly states the claim. "
+        "Otherwise answer NOT_SUPPORTED. Reply with one word only.\n\n"
+        f"SOURCE TEXT:\n{source_text}\n\nCLAIM:\n{claim}"
+    )
+    reply = llm.generate(prompt).strip().upper()
+    return reply.startswith("SUPPORTED")
+
 
 if __name__ == "__main__":
     llm = OllamaLLM()
