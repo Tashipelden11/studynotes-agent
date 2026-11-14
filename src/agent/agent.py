@@ -35,7 +35,6 @@ class LectureAgent:
 
         for v in state["verified"]:
 
-            # Keep concepts whose definitions are supported.
             if v["supported"] is True:
                 notes.append({
                     "term": v["term"],
@@ -44,7 +43,6 @@ class LectureAgent:
                 })
                 continue
 
-            # Check whether the concept itself appears in the lecture.
             if v["term"].casefold() in lecture_text.casefold():
                 notes.append({
                     "term": v["term"],
@@ -54,7 +52,6 @@ class LectureAgent:
                 mentioned += 1
                 continue
 
-            # Drop concepts that are not mentioned in the lecture.
             dropped += 1
             notes.append({
                 "term": v["term"],
@@ -72,7 +69,7 @@ class LectureAgent:
         )
 
     def _write_notes(self, state):
-        """Write and verify notes for each section."""
+        """Write and verify notes using the complete original lecture."""
         start = time.time()
         detail = self.memory.profile["detail"]
         failures = 0
@@ -81,21 +78,18 @@ class LectureAgent:
 
         for section in state["sections"]:
             try:
-                # Generate notes using the student's preferred detail level.
                 notes_text = write_section_notes(
                     section["text"], detail, self.llm
                 )
 
-                # Verify each claim against the original lecture section.
+                # Check claims against the complete lecture, not just one section.
                 marked_notes, stats = mark_unverified(
-                    notes_text, section["text"], self._check
+                    notes_text, state["lecture_text"], self._check
                 )
 
-                # Collect verification statistics.
                 total_checked += stats["checked"]
                 total_unverified += stats["unverified"]
 
-                # Store the verified notes.
                 state["notes"].append({
                     "title": section["title"],
                     "notes": marked_notes
@@ -127,6 +121,7 @@ class LectureAgent:
     def run(self, goal, lecture_text):
         self.trace = []
         state = {
+            "lecture_text": lecture_text,
             "sections": [],
             "concepts": [],
             "verified": [],
@@ -179,11 +174,11 @@ class LectureAgent:
             status = "ok" if out["ok"] else "error"
             self._log(step, status, time.time() - start, out.get("error", ""))
 
-        # 3. Reflect: preserve concepts mentioned in the lecture.
+        # 3. Reflect
         if state["verified"]:
             self._reflect(state, lecture_text)
 
-        # 4. Write and verify notes at the student's preferred detail level.
+        # 4. Write and verify notes
         if state["sections"]:
             self._write_notes(state)
 
