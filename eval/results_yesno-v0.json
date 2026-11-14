@@ -5,77 +5,77 @@
   "tn": 8,
   "fp": 0,
   "fn": 2,
-  "avg_seconds": 0.8,
+  "avg_seconds": 1.3,
   "cases": [
     {
       "claim": "An agent perceives its environment through sensors and acts on it through actuators.",
       "expected": true,
       "predicted": true,
       "correct": true,
-      "seconds": 2.4
+      "seconds": 11.4
     },
     {
       "claim": "A thermostat is a very simple agent.",
       "expected": true,
       "predicted": true,
       "correct": true,
-      "seconds": 0.7
+      "seconds": 0.6
     },
     {
       "claim": "An agent chooses actions to achieve a goal.",
       "expected": true,
       "predicted": true,
       "correct": true,
-      "seconds": 0.7
+      "seconds": 0.6
     },
     {
       "claim": "PEAS stands for Performance measure, Environment, Actuators and Sensors.",
       "expected": true,
       "predicted": false,
       "correct": false,
-      "seconds": 0.7
+      "seconds": 0.6
     },
     {
       "claim": "For a taxi driver agent, the actuators are steering and brakes.",
       "expected": true,
       "predicted": false,
       "correct": false,
-      "seconds": 0.8
+      "seconds": 0.6
     },
     {
       "claim": "Chess is fully observable and deterministic.",
       "expected": true,
       "predicted": true,
       "correct": true,
-      "seconds": 0.7
+      "seconds": 0.5
     },
     {
       "claim": "Taxi driving is partially observable and stochastic.",
       "expected": true,
       "predicted": true,
       "correct": true,
-      "seconds": 0.8
+      "seconds": 0.6
     },
     {
       "claim": "The type of environment strongly affects which agent architecture works best.",
       "expected": true,
       "predicted": true,
       "correct": true,
-      "seconds": 0.7
+      "seconds": 0.6
     },
     {
       "claim": "A partially observable environment is one where the agent can only perceive some of the states.",
       "expected": false,
       "predicted": false,
       "correct": true,
-      "seconds": 0.7
+      "seconds": 0.8
     },
     {
       "claim": "A deterministic environment is one where the outcome of an action is always the same.",
       "expected": false,
       "predicted": false,
       "correct": true,
-      "seconds": 0.6
+      "seconds": 0.7
     },
     {
       "claim": "A static environment does not change over time.",
@@ -89,14 +89,14 @@
       "expected": false,
       "predicted": false,
       "correct": true,
-      "seconds": 0.6
+      "seconds": 0.5
     },
     {
       "claim": "A self-driving car uses LIDAR sensors.",
       "expected": false,
       "predicted": false,
       "correct": true,
-      "seconds": 0.6
+      "seconds": 0.7
     },
     {
       "claim": "Chess is a stochastic environment.",
@@ -110,7 +110,7 @@
       "expected": false,
       "predicted": false,
       "correct": true,
-      "seconds": 0.5
+      "seconds": 0.6
     },
     {
       "claim": "Simple reflex agents react to stimuli without considering context.",
