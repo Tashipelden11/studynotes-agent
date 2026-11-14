@@ -6,41 +6,47 @@ The Lecture Notes Assistant is an AI-powered study assistant that converts lectu
 
 It uses an intelligent agent workflow to plan tasks, select and execute tools, extract important concepts, check information against the original lecture, and generate notes based on the student's preferred detail level.
 
-The system also uses student feedback to adjust the level of detail in future notes.
+The application also uses student feedback to adjust the level of detail in future notes.
 
 ## 2. Problem Statement
 
 Students often spend considerable time organising lecture materials and identifying important concepts. Manually creating study notes can also make it difficult to maintain consistency and avoid including information that was not covered in the lecture.
 
-This project addresses these problems by developing an AI agent that automates parts of the note-making process while checking generated information against the original lecture material.
+This project addresses these problems by developing an AI agent that helps automate the note-making process while checking generated information against the original lecture material.
 
 ## 3. Main Features
 
 - **Task planning:** Creates a sequence of steps based on the student's goal.
 - **Topic segmentation:** Divides lecture material into meaningful sections.
 - **Concept extraction:** Identifies important terms and definitions.
-- **Grounding checks:** Checks whether claims are supported by the lecture.
-- **Reflection:** Keeps verified concepts, preserves mentioned concepts without inventing definitions, and drops unsupported concepts.
+- **Grounding checks:** Checks whether generated claims are supported by the lecture.
+- **Reflection:** Reviews extracted concepts and their supporting information.
 - **Structured note generation:** Produces notes at different detail levels.
 - **Student memory:** Stores feedback and adapts the preferred detail level.
-- **Execution trace:** Records agent steps, status, time taken, and details.
+- **File upload:** Supports PDF, DOCX and TXT lecture materials in the local application.
+- **Execution trace:** Records agent steps, status, processing time and details.
+- **Feedback:** Allows students to provide feedback about the generated notes.
 
 ## 4. Agent Workflow
 
-1. The student provides a goal and lecture text.
-2. The planner creates a sequence of tasks.
-3. The agent segments the lecture into topics.
-4. The agent extracts important concepts.
-5. The grounding tool checks extracted concepts against the source lecture.
-6. The reflection stage reviews the results.
-7. The agent generates structured notes for each section.
-8. Generated claims are checked, and unsupported claims are marked `[unverified]`.
-9. The student provides feedback, allowing the memory component to adjust the detail level.
+1. The student uploads lecture material and selects a goal.
+2. The application extracts the lecture text.
+3. The planner creates a sequence of tasks.
+4. The agent segments the lecture into topics.
+5. The agent extracts important concepts.
+6. The grounding tool checks extracted concepts against the source lecture.
+7. The reflection stage reviews the results.
+8. The agent generates structured notes for each section.
+9. Generated claims are checked, and unsupported claims are marked `[unverified]`.
+10. The student provides feedback, allowing the memory component to adjust the preferred detail level.
+
 ### Planning and Memory
 
 The planner uses the language model to select available tools and arrange them in an execution sequence. If the generated plan is invalid, the system uses a predefined fallback plan.
 
-The student memory component stores the preferred note detail level and feedback history in a JSON file. It supports three detail levels:
+The student memory component stores the preferred note detail level and feedback history in a JSON file.
+
+It supports three detail levels:
 
 - Brief
 - Normal
@@ -51,8 +57,11 @@ When a student says the notes are too short, the system increases the detail lev
 ## 5. Technologies Used
 
 - Python
+- Streamlit
 - Ollama
-- Llama 3.2 (3B)
+- Qwen 2.5 (1.5B)
+- PyPDF
+- Python-docx
 - JSON
 - Pytest
 
@@ -60,6 +69,11 @@ When a student says the notes are too short, the system increases the detail lev
 
 ```text
 studynotes-agent/
+│
+├── app.py
+├── local_app.py
+├── requirements.txt
+├── README.md
 │
 ├── data/
 │   ├── sample_lecture.txt
@@ -97,7 +111,7 @@ studynotes-agent/
 
 - Python 3.10 or later
 - Ollama installed
-- Llama 3.2 (3B) model downloaded
+- Qwen 2.5 (1.5B) model downloaded
 
 ### Steps
 
@@ -118,36 +132,50 @@ python -m venv .venv
 Install the required packages:
 
 ```bash
-pip install ollama pytest
+pip install -r requirements.txt
 ```
 
 Download the language model:
 
 ```bash
-ollama pull llama3.2:3b
+ollama pull qwen2.5:1.5b
 ```
 
-Make sure the Ollama service is running.
+Make sure the Ollama service is running before starting the application.
 
-## 8. Running the Agent
+## 8. Running the Application
 
-Run the following command from the project root:
+### Actual AI Application (Local)
+
+Run:
 
 ```bash
-python -m src.agent.agent
+streamlit run local_app.py
 ```
 
-The agent will process the sample lecture, generate structured study notes, display key concepts, and show its execution trace.
+Open the local URL displayed in the terminal.
 
-At the end, the student can provide feedback about the note detail level.
+Upload a PDF, DOCX or TXT lecture file. The agent will process the lecture and generate structured study notes, key concepts and an execution trace.
+
+This version uses the locally installed Ollama model.
+
+### Public Demonstration
+
+The public demonstration is available at:
+
+https://studynotes-agent-huusw2azl5adokkdjbf62q.streamlit.app/
+
+It displays prepared example results to demonstrate the application's interface and workflow. It does not perform live AI processing.
 
 ## 9. Testing
 
-Run the note-generation tests:
+Run the tests:
 
 ```bash
-python -m pytest tests/test_notes.py -v
+python -m pytest -v
 ```
+
+The tests check selected note-generation and grounding-related functions.
 
 ## 10. Grounding Evaluation
 
@@ -176,18 +204,19 @@ python -m eval.run_grounding_eval
 ## 11. Limitations
 
 - The quality of generated notes depends on the language model.
+- Processing time depends on the computer's hardware and the size of the lecture.
 - Grounding checks may sometimes accept unsupported claims or reject supported claims.
-- The quote-based checker takes longer than the yes/no checker.
+- Exact-match reflection checks do not guarantee that every extracted concept is semantically correct.
 - Evaluation currently uses a small sample of 16 claims.
-- The current system processes lecture text rather than providing a complete file-upload interface.
-The planner can select tools dynamically, but the agent currently supports only a fixed set of execution handlers.
+- The actual AI application currently runs locally using Ollama. The public version is a demonstration rather than a live AI service.
+
 ## 12. Future Improvements
 
-- Integrate the quote-based grounding checker into the main agent.
-- Expand the evaluation dataset.
 - Improve concept extraction and note consistency.
-- Add support for PDF lecture uploads.
-- Develop a simple user interface.
+- Improve semantic grounding verification.
+- Expand the grounding evaluation dataset.
+- Improve processing speed.
+- Develop a hosted version that supports live AI processing.
 
 ## 13. Author
 
