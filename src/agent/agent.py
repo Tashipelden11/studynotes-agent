@@ -1,15 +1,18 @@
 import time
 
 from src.agent.llm import OllamaLLM
+from src.agent.notes import write_section_notes
 from src.agent.planner import make_plan
+from src.memory.student_memory import RATINGS, StudentMemory
 from src.tools.registry import run_tool
 
 MAX_REVISIONS = 1
 
 
 class LectureAgent:
-    def __init__(self, llm=None):
+    def __init__(self, llm=None, memory=None):
         self.llm = llm or OllamaLLM()
+        self.memory = memory or StudentMemory()
         self.trace = []
 
     def _log(self, step, status, seconds, detail=""):
@@ -73,9 +76,34 @@ class LectureAgent:
         state["final_notes"] = notes
         self._log("reflect", "ok", time.time() - start, f"revised={revised}, dropped={dropped}")
 
+    def _write_notes(self, state):
+        """Write notes for each section, sized by the student's stored detail level."""
+        start = time.time()
+        detail = self.memory.profile["detail"]
+        failures = 0
+        for section in state["sections"]:
+            try:
+                text = write_section_notes(section["text"], detail, self.llm)
+            except Exception:
+                text = "(could not write notes for this section)"
+                failures += 1
+            state["notes"].append({"title": section["title"], "notes": text})
+        status = "ok" if failures == 0 else "error"
+        self._log("write_notes", status, time.time() - start, f"detail={detail}, failures={failures}")
+
+    def give_feedback(self, rating, comment=""):
+        """Pass the student's feedback to memory, which adapts the detail level."""
+        self.memory.record_feedback(rating, comment)
+
     def run(self, goal, lecture_text):
         self.trace = []
-        state = {"sections": [], "concepts": [], "verified": [], "final_notes": []}
+        state = {
+            "sections": [],
+            "concepts": [],
+            "verified": [],
+            "final_notes": [],
+            "notes": [],
+        }
 
         # 1. Plan
         start = time.time()
@@ -121,6 +149,10 @@ class LectureAgent:
         if state["verified"]:
             self._reflect(state, lecture_text)
 
+        # 4. Write notes at the student's preferred detail level
+        if state["sections"]:
+            self._write_notes(state)
+
         return state, self.trace
 
 
@@ -129,13 +161,15 @@ if __name__ == "__main__":
         lecture = f.read()
 
     agent = LectureAgent()
+    print(f"Current detail level: {agent.memory.profile['detail']}")
     state, trace = agent.run("Turn this lecture into structured study notes", lecture)
 
-    print("\nSECTIONS")
-    for s in state["sections"]:
-        print(f"{s['id']}. {s['title']}")
+    print("\nSTUDY NOTES")
+    for n in state["notes"]:
+        print(f"\n## {n['title']}")
+        print(n["notes"])
 
-    print("\nFINAL NOTES")
+    print("\nKEY CONCEPTS")
     for n in state["final_notes"]:
         if n["status"] == "dropped":
             print(f"[dropped] {n['term']} (not supported by the lecture)")
@@ -145,3 +179,12 @@ if __name__ == "__main__":
     print("\nTRACE")
     for t in trace:
         print(t)
+
+    answer = input(
+        "\nWere the notes too_short, good, or too_long? (press Enter to skip): "
+    ).strip()
+    if answer in RATINGS:
+        agent.give_feedback(answer)
+        print("Detail level is now:", agent.memory.profile["detail"])
+    elif answer:
+        print("Not recognised, feedback skipped.")
