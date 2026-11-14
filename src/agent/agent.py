@@ -1,12 +1,11 @@
+
 import time
 
 from src.agent.llm import OllamaLLM
-from src.agent.notes import write_section_notes
+from src.agent.notes import write_section_notes, mark_unverified
 from src.agent.planner import make_plan
 from src.memory.student_memory import RATINGS, StudentMemory
 from src.tools.registry import run_tool
-
-MAX_REVISIONS = 1
 
 
 class LectureAgent:
@@ -27,69 +26,99 @@ class LectureAgent:
         )
         return out["result"] if out["ok"] else None
 
-    def _revise(self, term, lecture_text):
-        """Ask for a definition that uses ONLY the lecture. Returns None if there is none."""
-        prompt = (
-            f"Using ONLY information stated in the lecture text below, write a one-sentence "
-            f"definition of '{term}'. If the lecture text does not define or explain "
-            f"'{term}', reply exactly NONE. Reply with the definition only.\n\n"
-            f"LECTURE TEXT:\n{lecture_text}"
-        )
-        try:
-            reply = self.llm.generate(prompt).strip().strip('"')
-        except Exception:
-            return None
-        if not reply or reply.upper().startswith("NONE"):
-            return None
-        return reply
-
     def _reflect(self, state, lecture_text):
-        """Review unsupported concepts: try one grounded rewrite, otherwise drop them."""
+        """Keep verified concepts and preserve mentioned concepts without inventing definitions."""
         start = time.time()
         notes = []
-        revised = dropped = 0
+        mentioned = 0
+        dropped = 0
+
         for v in state["verified"]:
-            if v["supported"]:
-                notes.append(
-                    {"term": v["term"], "definition": v["definition"], "status": "verified"}
-                )
+
+            # Keep concepts whose definitions are supported.
+            if v["supported"] is True:
+                notes.append({
+                    "term": v["term"],
+                    "definition": v["definition"],
+                    "status": "verified"
+                })
                 continue
 
-            accepted = False
-            for _ in range(MAX_REVISIONS):
-                new_def = self._revise(v["term"], lecture_text)
-                if new_def is None:
-                    break
-                if self._check(f"{v['term']}: {new_def}", lecture_text):
-                    notes.append(
-                        {"term": v["term"], "definition": new_def, "status": "revised"}
-                    )
-                    revised += 1
-                    accepted = True
-                    break
-            if not accepted:
-                dropped += 1
-                notes.append(
-                    {"term": v["term"], "definition": v["definition"], "status": "dropped"}
-                )
+            # Check whether the concept itself appears in the lecture.
+            if v["term"].casefold() in lecture_text.casefold():
+                notes.append({
+                    "term": v["term"],
+                    "definition": "Mentioned in the lecture, but no verified definition is available.",
+                    "status": "mentioned"
+                })
+                mentioned += 1
+                continue
+
+            # Drop concepts that are not mentioned in the lecture.
+            dropped += 1
+            notes.append({
+                "term": v["term"],
+                "definition": v["definition"],
+                "status": "dropped"
+            })
 
         state["final_notes"] = notes
-        self._log("reflect", "ok", time.time() - start, f"revised={revised}, dropped={dropped}")
+
+        self._log(
+            "reflect",
+            "ok",
+            time.time() - start,
+            f"mentioned={mentioned}, dropped={dropped}"
+        )
 
     def _write_notes(self, state):
-        """Write notes for each section, sized by the student's stored detail level."""
+        """Write and verify notes for each section."""
         start = time.time()
         detail = self.memory.profile["detail"]
         failures = 0
+        total_checked = 0
+        total_unverified = 0
+
         for section in state["sections"]:
             try:
-                text = write_section_notes(section["text"], detail, self.llm)
-            except Exception:
-                text = "(could not write notes for this section)"
+                # Generate notes using the student's preferred detail level.
+                notes_text = write_section_notes(
+                    section["text"], detail, self.llm
+                )
+
+                # Verify each claim against the original lecture section.
+                marked_notes, stats = mark_unverified(
+                    notes_text, section["text"], self._check
+                )
+
+                # Collect verification statistics.
+                total_checked += stats["checked"]
+                total_unverified += stats["unverified"]
+
+                # Store the verified notes.
+                state["notes"].append({
+                    "title": section["title"],
+                    "notes": marked_notes
+                })
+
+            except Exception as e:
+                print(f"Notes error in {section['title']}: {e}")
                 failures += 1
-            state["notes"].append({"title": section["title"], "notes": text})
+
+                state["notes"].append({
+                    "title": section["title"],
+                    "notes": "(could not write or verify notes for this section)"
+                })
+
         status = "ok" if failures == 0 else "error"
-        self._log("write_notes", status, time.time() - start, f"detail={detail}, failures={failures}")
+
+        self._log(
+            "write_notes",
+            status,
+            time.time() - start,
+            f"detail={detail}, failures={failures}, "
+            f"checked={total_checked}, unverified={total_unverified}"
+        )
 
     def give_feedback(self, rating, comment=""):
         """Pass the student's feedback to memory, which adapts the detail level."""
@@ -108,7 +137,12 @@ class LectureAgent:
         # 1. Plan
         start = time.time()
         plan = make_plan(goal, self.llm)
-        self._log("plan", "ok", time.time() - start, f"{plan['steps']} ({plan['source']})")
+        self._log(
+            "plan",
+            "ok",
+            time.time() - start,
+            f"{plan['steps']} ({plan['source']})"
+        )
 
         # 2. Act: run each planned step
         for step in plan["steps"]:
@@ -128,15 +162,15 @@ class LectureAgent:
                 if not state["concepts"]:
                     self._log(step, "skipped", 0, "no concepts to verify yet")
                     continue
+
                 for concept in state["concepts"]:
                     claim = f"{concept['term']}: {concept['definition']}"
-                    state["verified"].append(
-                        {
-                            "term": concept["term"],
-                            "definition": concept["definition"],
-                            "supported": self._check(claim, lecture_text),
-                        }
-                    )
+                    state["verified"].append({
+                        "term": concept["term"],
+                        "definition": concept["definition"],
+                        "supported": self._check(claim, lecture_text),
+                    })
+
                 out = {"ok": True}
 
             else:
@@ -145,11 +179,11 @@ class LectureAgent:
             status = "ok" if out["ok"] else "error"
             self._log(step, status, time.time() - start, out.get("error", ""))
 
-        # 3. Reflect: act on what the grounding check found
+        # 3. Reflect: preserve concepts mentioned in the lecture.
         if state["verified"]:
             self._reflect(state, lecture_text)
 
-        # 4. Write notes at the student's preferred detail level
+        # 4. Write and verify notes at the student's preferred detail level.
         if state["sections"]:
             self._write_notes(state)
 
@@ -162,7 +196,10 @@ if __name__ == "__main__":
 
     agent = LectureAgent()
     print(f"Current detail level: {agent.memory.profile['detail']}")
-    state, trace = agent.run("Turn this lecture into structured study notes", lecture)
+    state, trace = agent.run(
+        "Turn this lecture into structured study notes",
+        lecture
+    )
 
     print("\nSTUDY NOTES")
     for n in state["notes"]:
@@ -183,6 +220,7 @@ if __name__ == "__main__":
     answer = input(
         "\nWere the notes too_short, good, or too_long? (press Enter to skip): "
     ).strip()
+
     if answer in RATINGS:
         agent.give_feedback(answer)
         print("Detail level is now:", agent.memory.profile["detail"])

@@ -1,52 +1,100 @@
+
+import json
+
 from src.agent.llm import OllamaLLM
 from src.tools.concepts import extract_concepts
 
-MIN_QUOTE_LENGTH = 25
-
 
 def _normalize(text):
-    """Lowercase and collapse whitespace so quotes can be compared reliably."""
+    """Lowercase and collapse whitespace."""
     return " ".join(text.lower().split())
 
 
 def check_grounding(claim, source_text, llm):
-    """Check whether a claim is supported by the source text.
+    """Check whether the lecture directly supports a claim."""
 
-    The LLM must quote a sentence from the source. The code then verifies the
-    quote really appears in the source, so an invented quote counts as unsupported.
-    Returns True (supported) or False (unsupported).
-    """
     prompt = (
-        "Find ONE sentence in the source text that clearly states the claim. "
-        "If no sentence states it, reply exactly NONE. "
-        "Otherwise copy that sentence exactly as written, with nothing else.\n\n"
-        f"SOURCE TEXT:\n{source_text}\n\nCLAIM:\n{claim}"
+        "You are a lecture information checker.\n\n"
+        "Decide whether the source supports the meaning of the claim.\n\n"
+        "Rules:\n"
+        "1. Use only information from the source.\n"
+        "2. A paraphrase is allowed if it has the same meaning.\n"
+        "3. Do not use outside knowledge.\n"
+        "4. Do not invent missing definitions.\n"
+        "5. A term being mentioned does not mean it is defined.\n"
+        "6. An example can support a claim about that example.\n"
+        "7. Evidence must be copied exactly from the source.\n\n"
+        "Return ONLY one JSON object:\n"
+        '{"supported": true, "evidence": "exact source quotation"}\n'
+        "or\n"
+        '{"supported": false, "evidence": ""}\n\n'
+        f"SOURCE TEXT:\n{source_text}\n\n"
+        f"CLAIM:\n{claim}"
     )
-    reply = llm.generate(prompt).strip().strip('"')
 
-    if not reply or reply.upper().startswith("NONE"):
+    try:
+        reply = llm.generate(prompt).strip()
+        start = reply.find("{")
+
+        if start == -1:
+            return False
+
+        result, _ = json.JSONDecoder().raw_decode(reply[start:])
+
+        if not isinstance(result, dict):
+            return False
+
+        supported = result.get("supported")
+        evidence = result.get("evidence", "")
+
+        if not isinstance(supported, bool):
+            return False
+
+        if supported is False:
+            return False
+
+        if not isinstance(evidence, str) or not evidence.strip():
+            return False
+
+        if _normalize(evidence) not in _normalize(source_text):
+            return False
+
+        return True
+
+    except Exception:
         return False
-    if len(reply) < MIN_QUOTE_LENGTH:
-        return False
-    return _normalize(reply) in _normalize(source_text)
+
 
 def check_grounding_yesno(claim, source_text, llm):
-    """Original version: ask the LLM for a one-word verdict (no quote check)."""
-    prompt = (
-        "Read the source text and the claim. "
-        "Answer SUPPORTED only if the source text clearly states the claim. "
-        "Otherwise answer NOT_SUPPORTED. Reply with one word only.\n\n"
-        f"SOURCE TEXT:\n{source_text}\n\nCLAIM:\n{claim}"
-    )
-    reply = llm.generate(prompt).strip().upper()
-    return reply.startswith("SUPPORTED")
+    """Keep the original function name for compatibility."""
+    return check_grounding(claim, source_text, llm)
 
 
 if __name__ == "__main__":
     llm = OllamaLLM()
+
     with open("data/sample_lecture.txt", encoding="utf-8") as f:
         lecture = f.read()
-    for c in extract_concepts(lecture, llm):
-        claim = f"{c['term']}: {c['definition']}"
-        verdict = "SUPPORTED" if check_grounding(claim, lecture, llm) else "NOT SUPPORTED"
+
+    print("\nGROUNDING TESTS\n")
+
+    test_claims = [
+        "An intelligent agent perceives its environment through sensors and acts through actuators.",
+        "A thermostat is an example of a simple agent.",
+        "PEAS stands for Performance measure, Environment, Actuators and Sensors.",
+        "A static environment does not change over time.",
+        "Chess is fully observable and deterministic.",
+    ]
+
+    for claim in test_claims:
+        result = check_grounding(claim, lecture, llm)
+        verdict = "SUPPORTED" if result else "NOT SUPPORTED"
+        print(f"[{verdict}] {claim}")
+
+    print("\nEXTRACTED CONCEPTS\n")
+
+    for concept in extract_concepts(lecture, llm):
+        claim = f"{concept['term']}: {concept['definition']}"
+        result = check_grounding(claim, lecture, llm)
+        verdict = "SUPPORTED" if result else "NOT SUPPORTED"
         print(f"[{verdict}] {claim}")

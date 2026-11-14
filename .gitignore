@@ -1,3 +1,18 @@
+# Virtual environment
 .venv/
+
+# Python cache
 __pycache__/
+*.py[cod]
+
+# Environment variables
 .env
+
+# Test cache
+.pytest_cache/
+
+# Temporary backup files
+*_backup.txt
+
+# Local model files
+*.gguf
