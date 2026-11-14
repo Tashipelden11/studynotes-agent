@@ -1,0 +1,5 @@
+Today we start with what an intelligent agent is. An agent perceives its environment through sensors and acts on it through actuators. A thermostat is a very simple agent, while a self-driving car is a much more complex one. The key idea is that an agent chooses actions to achieve a goal, rather than just producing output.
+
+Next, let's talk about PEAS. PEAS stands for Performance measure, Environment, Actuators and Sensors. When we design an agent, we begin by writing down these four things. For a taxi driver agent, the performance measure might be safety and speed, the environment is roads and traffic, the actuators are steering and brakes, and the sensors are cameras and GPS.
+
+Finally, we look at types of environments. An environment can be fully or partially observable, deterministic or stochastic, and static or dynamic. Chess is fully observable and deterministic, but taxi driving is partially observable and stochastic. The type of environment strongly affects which agent architecture works best.
